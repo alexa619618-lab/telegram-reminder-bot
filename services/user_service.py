@@ -42,28 +42,36 @@ class UserService:
             self._session.add(user)
             await self._session.flush()
             logger.info("Created new user telegram_id=%s", telegram_id)
+
         else:
-            # Update metadata only when values actually changed — avoids a
-            # redundant DB write (and SQLAlchemy dirty-mark) on every message.
+            # Update metadata only when values actually changed
             changed = False
+
             if user.username != username:
                 user.username = username
                 changed = True
+
             if user.first_name != first_name:
                 user.first_name = first_name
                 changed = True
+
             if user.last_name != last_name:
                 user.last_name = last_name
                 changed = True
-            # Always refresh last_seen so activity tracking stays accurate,
-            # but only write when we already have a dirty record.
+
             now = datetime.now(pytz.utc)
-           last_seen = user.last_seen_at
 
-if last_seen and last_seen.tzinfo is None:
-    last_seen = last_seen.replace(tzinfo=pytz.utc)
+            # SQLite may return naive datetime values.
+            # Convert them to timezone-aware UTC before comparing.
+            last_seen = user.last_seen_at
 
-if changed or (now - (last_seen or datetime.min.replace(tzinfo=pytz.utc))).seconds > 300:
+            if last_seen and last_seen.tzinfo is None:
+                last_seen = last_seen.replace(tzinfo=pytz.utc)
+
+            if changed or (
+                now
+                - (last_seen or datetime.min.replace(tzinfo=pytz.utc))
+            ).seconds > 300:
                 user.last_seen_at = now
 
         return user
@@ -109,11 +117,17 @@ if changed or (now - (last_seen or datetime.min.replace(tzinfo=pytz.utc))).secon
     ) -> User:
         """Update daily agenda settings for a user."""
         user.daily_agenda_enabled = enabled
+
         if agenda_time is not None:
             user.daily_agenda_time = agenda_time
+
         await self._session.flush()
+
         logger.info(
             "Updated daily agenda for user telegram_id=%s: enabled=%s time=%s",
-            user.telegram_id, enabled, agenda_time or user.daily_agenda_time,
+            user.telegram_id,
+            enabled,
+            agenda_time or user.daily_agenda_time,
         )
+
         return user
