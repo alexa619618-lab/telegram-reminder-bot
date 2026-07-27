@@ -58,7 +58,12 @@ class UserService:
             # Always refresh last_seen so activity tracking stays accurate,
             # but only write when we already have a dirty record.
             now = datetime.now(pytz.utc)
-            if changed or (now - (user.last_seen_at or datetime.min.replace(tzinfo=pytz.utc))).seconds > 300:
+           last_seen = user.last_seen_at
+
+if last_seen and last_seen.tzinfo is None:
+    last_seen = last_seen.replace(tzinfo=pytz.utc)
+
+if changed or (now - (last_seen or datetime.min.replace(tzinfo=pytz.utc))).seconds > 300:
                 user.last_seen_at = now
 
         return user
