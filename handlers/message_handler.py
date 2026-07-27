@@ -153,7 +153,8 @@ def _parse_time_shorthand(text: str, tz: str) -> datetime | None:
 @router.message(Command("start"))
 async def cmd_start(message: Message, db_user: User, session, state: FSMContext) -> None:
     await state.clear()
-    if not db_user:
+    
+if not db_user:
     await message.answer("لطفاً دوباره /start را بزنید.")
     return
 
