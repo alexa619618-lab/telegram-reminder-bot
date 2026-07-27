@@ -1,6 +1,7 @@
 """
 Middleware that ensures every incoming update has a User object in the data dict.
 """
+
 from __future__ import annotations
 
 import logging
@@ -19,12 +20,11 @@ class UserMiddleware(BaseMiddleware):
     """
     Before each handler runs:
     1. Open a DB session
-    2. Get-or-create the User row
-    3. Inject ``session`` and ``db_user`` into handler data
+    2. Get or create the User row
+    3. Inject session and db_user into handler data
 
-    If the user cannot be resolved, ``db_user`` is set to ``None`` so handlers
-    that declare it as a required parameter will be skipped automatically by
-    aiogram's dependency injection — protecting them from NoneType errors.
+    If user creation fails, the exception is raised immediately so the
+    real database problem is visible instead of passing None to handlers.
     """
 
     async def __call__(
@@ -33,39 +33,49 @@ class UserMiddleware(BaseMiddleware):
         event: TelegramObject,
         data: dict[str, Any],
     ) -> Any:
-        # Extract Telegram user from the event
+
         tg_user: TelegramUser | None = data.get("event_from_user")
 
         async with AsyncSessionFactory() as session:
             data["session"] = session
 
-            if tg_user:
-                svc = UserService(session)
-                try:
-                    db_user = await svc.get_or_create(
-                        telegram_id=tg_user.id,
-                        username=tg_user.username,
-                        first_name=tg_user.first_name,
-                        last_name=tg_user.last_name,
-                    )
-                    await session.commit()
-                    data["db_user"] = db_user
-                except Exception as exc:
-                    logger.exception(
-                        "UserMiddleware: failed to get/create user telegram_id=%s: %s",
-                        tg_user.id, exc,
-                    )
-                    await session.rollback()
-                    data["db_user"] = None
-            else:
-                data["db_user"] = None
+            if not tg_user:
+                logger.warning(
+                    "UserMiddleware: no Telegram user found for update"
+                )
+                return await handler(event, data)
+
+            svc = UserService(session)
 
             try:
-                result = await handler(event, data)
+                db_user = await svc.get_or_create(
+                    telegram_id=tg_user.id,
+                    username=tg_user.username,
+                    first_name=tg_user.first_name,
+                    last_name=tg_user.last_name,
+                )
+
+                if db_user is None:
+                    raise RuntimeError(
+                        f"UserService returned None for telegram_id={tg_user.id}"
+                    )
+
+                data["db_user"] = db_user
+
                 await session.commit()
-                return result
-            except Exception:
+
+                return await handler(event, data)
+
+            except Exception as exc:
                 await session.rollback()
+
+                logger.exception(
+                    "UserMiddleware failed for telegram_id=%s: %s",
+                    tg_user.id,
+                    exc,
+                )
+
                 raise
+
             finally:
                 await session.close()
